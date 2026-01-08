@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Icon Generator</title>
+</head>
+<body>
+    <h1>PWA Icon Generator</h1>
+    <p>Open browser console and run the code below to generate icons:</p>
+    <pre>
+// Generate 192x192 icon
+const canvas192 = document.createElement('canvas');
+canvas192.width = 192;
+canvas192.height = 192;
+const ctx192 = canvas192.getContext('2d');
+ctx192.fillStyle = '#2c3e50';
+ctx192.fillRect(0, 0, 192, 192);
+ctx192.fillStyle = '#ffffff';
+ctx192.font = 'bold 64px Arial';
+ctx192.textAlign = 'center';
+ctx192.textBaseline = 'middle';
+ctx192.fillText('RP', 96, 96);
+const link192 = document.createElement('a');
+link192.download = 'icon-192.png';
+link192.href = canvas192.toDataURL();
+link192.click();
+
+// Generate 512x512 icon
+const canvas512 = document.createElement('canvas');
+canvas512.width = 512;
+canvas512.height = 512;
+const ctx512 = canvas512.getContext('2d');
+ctx512.fillStyle = '#2c3e50';
+ctx512.fillRect(0, 0, 512, 512);
+ctx512.fillStyle = '#ffffff';
+ctx512.font = 'bold 180px Arial';
+ctx512.textAlign = 'center';
+ctx512.textBaseline = 'middle';
+ctx512.fillText('RP', 256, 256);
+const link512 = document.createElement('a');
+link512.download = 'icon-512.png';
+link512.href = canvas512.toDataURL();
+link512.click();
+    </pre>
+    <script>
+        // Auto-run on load
+        window.onload = function() {
+            console.log('Run the code in the pre tag to generate icons');
+        };
+    </script>
+</body>
+</html>

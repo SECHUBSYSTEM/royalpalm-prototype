@@ -1,0 +1,214 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Block {
+  id            String   @id @default(uuid())
+  blockName     String
+  blockCode     String   @unique
+  areaHectares  Decimal? @db.Decimal(10, 2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  palms Palm[]
+
+  @@map("blocks")
+}
+
+model Palm {
+  id          String   @id @default(uuid())
+  blockId     String
+  qrCode      String   @unique
+  rowNumber   Int?
+  columnNumber Int?
+  plantingDate DateTime?
+  variety     String?
+  status      PalmStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  block       Block            @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  activities  PalmActivity[]
+
+  @@index([blockId])
+  @@index([qrCode])
+  @@map("palms")
+}
+
+enum PalmStatus {
+  ACTIVE
+  INACTIVE
+  DEAD
+  REPLACED
+}
+
+model Employee {
+  id                String   @id @default(uuid())
+  employeeCode      String   @unique
+  fullName          String
+  role              EmployeeRole
+  phone             String?
+  fingerprintTemplate Bytes?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  activities        PalmActivity[]
+  attendanceRecords Attendance[]
+  user              User?
+
+  @@index([employeeCode])
+  @@map("employees")
+}
+
+enum EmployeeRole {
+  WORKER
+  SUPERVISOR
+  ADMIN
+}
+
+model PalmActivity {
+  id            String   @id @default(uuid())
+  palmId        String
+  workerId      String
+  activityType  ActivityType
+  activityDate  DateTime @default(now())
+  details       Json?
+  notes         String?  @db.Text
+  gpsLatitude   Decimal? @db.Decimal(10, 8)
+  gpsLongitude  Decimal? @db.Decimal(10, 8)
+  synced        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  palm          Palm     @relation(fields: [palmId], references: [id], onDelete: Cascade)
+  worker        Employee @relation(fields: [workerId], references: [id])
+
+  @@index([palmId])
+  @@index([workerId])
+  @@index([activityDate])
+  @@index([synced])
+  @@map("palm_activities")
+}
+
+enum ActivityType {
+  FERTILISER
+  HARVESTING
+  PRUNING
+  DISEASE_INSPECTION
+  SPRAYING
+  WEEDING
+  MORTALITY
+}
+
+model Attendance {
+  id            String   @id @default(uuid())
+  employeeId    String
+  checkIn       DateTime
+  checkOut      DateTime?
+  checkInLocation String? // Stored as point or JSON
+  verifiedBy    VerificationMethod @default(FINGERPRINT)
+  synced        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  employee      Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@index([checkIn])
+  @@index([synced])
+  @@map("attendance")
+}
+
+enum VerificationMethod {
+  FINGERPRINT
+  PIN
+  SUPERVISOR_OVERRIDE
+}
+
+model User {
+  id           String   @id @default(uuid())
+  employeeId   String   @unique
+  username     String   @unique
+  passwordHash String
+  role         UserRole
+  lastLogin    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  auditLogs    AuditLog[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  SUPERVISOR
+  WORKER
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  action     String
+  entityType String
+  entityId   String
+  oldValues  Json?
+  newValues  Json?
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Device {
+  id              String   @id @default(uuid())
+  deviceIdentifier String   @unique
+  registeredBy    String
+  isActive        Boolean  @default(true)
+  lastSync        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  syncLogs        SyncLog[]
+
+  @@map("devices")
+}
+
+model SyncLog {
+  id            String   @id @default(uuid())
+  deviceId      String
+  recordsSent   Int      @default(0)
+  recordsReceived Int    @default(0)
+  status        SyncStatus
+  completedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  device        Device   @relation(fields: [deviceId], references: [id])
+
+  @@index([deviceId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("sync_logs")
+}
+
+enum SyncStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  PARTIAL
+}
+
