@@ -1,7 +1,5 @@
 import type { NextConfig } from "next";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore - next-pwa types are for Next.js 13, but we're on 16 - works at runtime
-import withPWA from "next-pwa";
+import withPWA from "@ducanh2912/next-pwa";
 
 const nextConfig: NextConfig = {
   // Fix Turbopack/webpack conflict with next-pwa
@@ -53,7 +51,7 @@ const nextConfig: NextConfig = {
           {
             key: "Content-Security-Policy",
             value:
-              "default-src 'self' https: localhost:* 127.0.0.1:*; script-src 'self' 'unsafe-eval' 'unsafe-inline' https: localhost:* 127.0.0.1:*; style-src 'self' 'unsafe-inline' https: localhost:* 127.0.0.1:*; img-src 'self' data: https: blob: localhost:* 127.0.0.1:*; font-src 'self' data: https: localhost:* 127.0.0.1:*; connect-src 'self' https: ws: wss: localhost:* 127.0.0.1:*; media-src 'self' https: localhost:* 127.0.0.1:*;",
+              "default-src 'self' https: localhost:* 127.0.0.1:*; script-src 'self' 'unsafe-eval' 'unsafe-inline' https: localhost:* 127.0.0.1:*; style-src 'self' 'unsafe-inline' https: localhost:* 127.0.0.1:*; img-src 'self' data: https: blob: localhost:* 127.0.0.1:*; font-src 'self' data: https: localhost:* 127.0.0.1:*; connect-src 'self' https: ws: wss: localhost:* 127.0.0.1:*; media-src 'self' https: localhost:* 127.0.0.1:*; worker-src 'self' blob:;",
           },
         ],
       },
@@ -64,22 +62,23 @@ const nextConfig: NextConfig = {
 const pwaConfig = withPWA({
   dest: "public",
   register: true,
-  skipWaiting: true,
   disable: process.env.NODE_ENV === "development", // Disable in dev for faster reloads
-  runtimeCaching: [
-    {
-      urlPattern: /^https?.*/,
-      handler: "NetworkFirst",
-      options: {
-        cacheName: "offlineCache",
-        expiration: {
-          maxEntries: 200,
+  workboxOptions: {
+    skipWaiting: true,
+    disableDevLogs: true,
+    runtimeCaching: [
+      {
+        urlPattern: /^https?.*/,
+        handler: "NetworkFirst",
+        options: {
+          cacheName: "offlineCache",
+          expiration: {
+            maxEntries: 200,
+          },
         },
       },
-    },
-  ],
+    ],
+  },
 });
 
-// Type assertion to work around Next.js version mismatch in types
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export default pwaConfig(nextConfig as any) as NextConfig;
+export default pwaConfig(nextConfig);
