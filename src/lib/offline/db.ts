@@ -3,6 +3,7 @@ import { openDB, IDBPDatabase } from "idb";
 export interface ActivityQueueItem {
   id: string;
   palm_id: string;
+  qr_code: string; // QR code for server-side palm resolution
   activity_type: string;
   data: Record<string, unknown>;
   synced: boolean;

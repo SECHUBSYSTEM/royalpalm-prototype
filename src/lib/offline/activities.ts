@@ -12,6 +12,7 @@ const generateId = () => {
 
 export interface ActivityFormData {
   palmId: string;
+  qrCode: string; // QR code for server-side palm resolution
   activityType: string;
   activityDate: Date;
   details?: Record<string, unknown>;
@@ -69,6 +70,7 @@ export const saveActivityOffline = async (
   const activity: ActivityQueueItem = {
     id: generateId(),
     palm_id: data.palmId,
+    qr_code: data.qrCode, // Store QR code for server-side resolution
     activity_type: data.activityType,
     data: {
       workerId: data.workerId,
@@ -101,6 +103,7 @@ export const saveActivityHybrid = async (
     try {
       const response = await axiosInstance.post("/api/activities/create", {
         palmId: data.palmId,
+        qrCode: data.qrCode, // Include QR code for server-side palm resolution
         workerId: data.workerId,
         activityType: data.activityType,
         activityDate: data.activityDate.toISOString(),
@@ -120,6 +123,7 @@ export const saveActivityHybrid = async (
       const activity: ActivityQueueItem = {
         id: supabaseId,
         palm_id: data.palmId,
+        qr_code: data.qrCode, // Store QR code for consistency
         activity_type: data.activityType,
         data: {
           workerId: data.workerId,
@@ -140,7 +144,10 @@ export const saveActivityHybrid = async (
       return { saved: true, synced: true, id: supabaseId };
     } catch (error) {
       // Supabase failed, fallback to IndexedDB
-      console.warn("[Hybrid Activity] Supabase failed, using IndexedDB:", error);
+      console.warn(
+        "[Hybrid Activity] Supabase failed, using IndexedDB:",
+        error
+      );
     }
   }
 

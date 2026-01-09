@@ -5,6 +5,7 @@ import { z } from "zod";
 const activitySchema = z.object({
   id: z.string(),
   palm_id: z.string(),
+  qr_code: z.string().optional(), // QR code for server-side palm resolution
   activity_type: z.string(),
   data: z.record(z.string(), z.unknown()),
   synced: z.boolean(),
@@ -17,52 +18,75 @@ const syncSchema = z.object({
 
 export async function POST(request: NextRequest) {
   console.log("[Activity Sync] Starting sync...");
-  
+
   try {
     const body = await request.json();
     const { activities } = syncSchema.parse(body);
-    
+
     console.log(`[Activity Sync] Processing ${activities.length} activities`);
 
     // Validate and insert activities
     const results = await Promise.allSettled(
       activities.map(async (activity) => {
-        // Try to find palm by ID first, then by QR code
-        let palm = await prisma.palm.findUnique({
-          where: { id: activity.palm_id },
-        });
+        // Try to find palm by QR code first (most reliable), then by ID
+        let palm = null;
 
-        if (!palm) {
-          // Try by QR code
+        // If qr_code is provided, use it (preferred method)
+        if (activity.qr_code) {
+          palm = await prisma.palm.findUnique({
+            where: { qrCode: activity.qr_code },
+          });
+        }
+
+        // Fallback: try palm_id as UUID
+        if (!palm && activity.palm_id) {
+          palm = await prisma.palm.findUnique({
+            where: { id: activity.palm_id },
+          });
+        }
+
+        // Last resort: try palm_id as QR code
+        if (!palm && activity.palm_id) {
           palm = await prisma.palm.findUnique({
             where: { qrCode: activity.palm_id },
           });
         }
 
         if (!palm) {
-          console.warn(`[Activity Sync] Palm ${activity.palm_id} not found`);
-          throw new Error(`Palm ${activity.palm_id} not found`);
+          const identifier = activity.qr_code || activity.palm_id;
+          console.warn(`[Activity Sync] Palm ${identifier} not found`);
+          throw new Error(`Palm ${identifier} not found`);
         }
 
         // Parse GPS coordinates safely
         let gpsLatitude: number | undefined;
         let gpsLongitude: number | undefined;
-        
-        if (activity.data.gpsLatitude !== undefined && activity.data.gpsLatitude !== null) {
-          gpsLatitude = typeof activity.data.gpsLatitude === 'number' 
-            ? activity.data.gpsLatitude 
-            : parseFloat(String(activity.data.gpsLatitude));
+
+        if (
+          activity.data.gpsLatitude !== undefined &&
+          activity.data.gpsLatitude !== null
+        ) {
+          gpsLatitude =
+            typeof activity.data.gpsLatitude === "number"
+              ? activity.data.gpsLatitude
+              : parseFloat(String(activity.data.gpsLatitude));
           if (isNaN(gpsLatitude)) gpsLatitude = undefined;
         }
-        
-        if (activity.data.gpsLongitude !== undefined && activity.data.gpsLongitude !== null) {
-          gpsLongitude = typeof activity.data.gpsLongitude === 'number'
-            ? activity.data.gpsLongitude
-            : parseFloat(String(activity.data.gpsLongitude));
+
+        if (
+          activity.data.gpsLongitude !== undefined &&
+          activity.data.gpsLongitude !== null
+        ) {
+          gpsLongitude =
+            typeof activity.data.gpsLongitude === "number"
+              ? activity.data.gpsLongitude
+              : parseFloat(String(activity.data.gpsLongitude));
           if (isNaN(gpsLongitude)) gpsLongitude = undefined;
         }
 
-        console.log(`[Activity Sync] Creating ${activity.activity_type} for palm ${palm.qrCode}`);
+        console.log(
+          `[Activity Sync] Creating ${activity.activity_type} for palm ${palm.qrCode}`
+        );
 
         // Create activity record
         return prisma.palmActivity.create({
@@ -91,7 +115,9 @@ export async function POST(request: NextRequest) {
     const successful = results.filter((r) => r.status === "fulfilled").length;
     const failed = results.filter((r) => r.status === "rejected").length;
 
-    console.log(`[Activity Sync] Complete - ${successful} synced, ${failed} failed`);
+    console.log(
+      `[Activity Sync] Complete - ${successful} synced, ${failed} failed`
+    );
 
     return NextResponse.json({
       success: true,

@@ -4,6 +4,7 @@ import { z } from "zod";
 
 const activitySchema = z.object({
   palmId: z.string(),
+  qrCode: z.string().optional(), // QR code for palm resolution (preferred)
   workerId: z.string(),
   activityType: z.enum([
     "FERTILISER",
@@ -26,27 +27,47 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const data = activitySchema.parse(body);
 
-    // Verify palm exists
-    const palm = await prisma.palm.findUnique({
-      where: { id: data.palmId },
-    });
+    // Verify palm exists - prefer qrCode lookup (most reliable)
+    let palm = null;
+    let resolvedPalmId = data.palmId;
 
+    // If qrCode is provided, use it (preferred method)
+    if (data.qrCode) {
+      palm = await prisma.palm.findUnique({
+        where: { qrCode: data.qrCode },
+      });
+      if (palm) {
+        resolvedPalmId = palm.id;
+      }
+    }
+
+    // Fallback: try palmId as UUID
     if (!palm) {
-      // Try to find by QR code
-      const palmByQR = await prisma.palm.findUnique({
+      palm = await prisma.palm.findUnique({
+        where: { id: data.palmId },
+      });
+    }
+
+    // Last resort: try palmId as QR code
+    if (!palm) {
+      palm = await prisma.palm.findUnique({
         where: { qrCode: data.palmId },
       });
-      
-      if (!palmByQR) {
-        return NextResponse.json(
-          { error: `Palm ${data.palmId} not found` },
-          { status: 404 }
-        );
+      if (palm) {
+        resolvedPalmId = palm.id;
       }
-      
-      // Use the found palm's ID
-      data.palmId = palmByQR.id;
     }
+
+    if (!palm) {
+      const identifier = data.qrCode || data.palmId;
+      return NextResponse.json(
+        { error: `Palm ${identifier} not found` },
+        { status: 404 }
+      );
+    }
+
+    // Use the resolved palm ID
+    data.palmId = resolvedPalmId;
 
     // Verify worker exists
     const worker = await prisma.employee.findUnique({
@@ -72,7 +93,9 @@ export async function POST(request: NextRequest) {
         workerId: data.workerId,
         activityType: data.activityType,
         activityDate: activityDate,
-        details: data.details ? JSON.parse(JSON.stringify(data.details)) : undefined,
+        details: data.details
+          ? JSON.parse(JSON.stringify(data.details))
+          : undefined,
         notes: data.notes,
         gpsLatitude: data.gpsLatitude,
         gpsLongitude: data.gpsLongitude,
@@ -80,7 +103,9 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    console.log(`[Activity] Created ${data.activityType} for palm ${data.palmId}`);
+    console.log(
+      `[Activity] Created ${data.activityType} for palm ${data.palmId}`
+    );
 
     return NextResponse.json({
       success: true,

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import axiosInstance from "@/lib/api/axios";
+import QRCode from "qrcode";
 
 export default function QRGeneratorPage() {
   const [palmCode, setPalmCode] = useState("");
@@ -35,15 +35,20 @@ export default function QRGeneratorPage() {
     setQrCodeDataUrl(null);
 
     try {
-      const response = await axiosInstance.post("/api/qr/generate", {
-        code: palmCode.trim(),
+      // Generate QR code client-side - works offline!
+      const dataUrl = await QRCode.toDataURL(palmCode.trim(), {
+        width: 400,
+        margin: 2,
+        color: {
+          dark: "#000000",
+          light: "#FFFFFF",
+        },
       });
 
-      setQrCodeDataUrl(response.data.qrCode);
+      setQrCodeDataUrl(dataUrl);
     } catch (err) {
       const errorMessage =
-        (err as { response?: { data?: { error?: string } } })?.response?.data
-          ?.error || "Failed to generate QR code";
+        err instanceof Error ? err.message : "Failed to generate QR code";
       setError(errorMessage);
     } finally {
       setIsGenerating(false);

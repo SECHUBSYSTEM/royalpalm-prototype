@@ -19,6 +19,12 @@ interface Palm {
   status: string;
 }
 
+// Minimal palm info when full details not available (offline without cache)
+interface MinimalPalm {
+  qrCode: string;
+  isMinimal: true;
+}
+
 interface ActivityFormProps {
   palmId: string;
   qrCode: string;
@@ -42,10 +48,11 @@ export default function ActivityForm({
   onSuccess,
   onCancel,
 }: ActivityFormProps) {
-  const [palm, setPalm] = useState<Palm | null>(null);
+  const [palm, setPalm] = useState<Palm | MinimalPalm | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [offlineWarning, setOfflineWarning] = useState<string | null>(null);
 
   const [activityType, setActivityType] = useState<ActivityType>(
     ActivityType.FERTILISER
@@ -64,7 +71,7 @@ export default function ActivityForm({
   const { user } = useAuthStore();
 
   useEffect(() => {
-    // Fetch palm details - use local cache first
+    // Fetch palm details - use local cache first, gracefully degrade if not available
     const fetchPalm = async () => {
       try {
         // Try local cache first
@@ -82,14 +89,15 @@ export default function ActivityForm({
           } catch (apiErr) {
             // API failed, but maybe we have stale cache?
             palmData = await getPalmFromCache(qrCode);
+            // If still no data, we'll fall through to minimal mode
             if (!palmData) {
-              throw apiErr;
+              console.warn("API fetch failed, palm not in cache:", apiErr);
             }
           }
         }
 
         if (palmData) {
-          // Convert Palm type to local Palm interface
+          // Convert Palm type to local Palm interface - full details available
           setPalm({
             id: palmData.id,
             qrCode: palmData.qrCode,
@@ -100,12 +108,28 @@ export default function ActivityForm({
             variety: palmData.variety ?? undefined,
             status: palmData.status,
           });
+          setOfflineWarning(null);
         } else {
-          setError("Palm not found in cache and offline");
+          // Palm not in cache - use minimal mode with just QR code
+          // Activity can still be recorded and will be linked on sync
+          setPalm({
+            qrCode: qrCode,
+            isMinimal: true,
+          });
+          setOfflineWarning(
+            "Palm details unavailable offline. Activity will be recorded with QR code and linked when online."
+          );
         }
       } catch (err) {
-        setError("Failed to load palm details");
-        console.error(err);
+        // Even on error, allow minimal recording
+        console.error("Error fetching palm:", err);
+        setPalm({
+          qrCode: qrCode,
+          isMinimal: true,
+        });
+        setOfflineWarning(
+          "Could not load palm details. Activity will be recorded with QR code only."
+        );
       } finally {
         setLoading(false);
       }
@@ -140,9 +164,20 @@ export default function ActivityForm({
         return;
       }
 
+      if (!palm) {
+        setError("Palm data not loaded");
+        return;
+      }
+
+      // Determine palmId - use prop palmId if available, otherwise qrCode
+      // The sync process will resolve qrCode to palmId on the server
+      const isMinimal = "isMinimal" in palm && palm.isMinimal;
+      const effectivePalmId = isMinimal ? qrCode : palmId || (palm as Palm).id;
+
       // Use hybrid save - tries Supabase first, falls back to IndexedDB
       const result = await saveActivityHybrid({
-        palmId,
+        palmId: effectivePalmId,
+        qrCode: qrCode, // Always include qrCode for server-side resolution
         activityType,
         activityDate: new Date(activityDate),
         details,
@@ -316,12 +351,26 @@ export default function ActivityForm({
     );
   }
 
+  // Check if we have full palm details or minimal (QR only)
+  const isMinimalPalm = "isMinimal" in palm && palm.isMinimal;
+  const fullPalm = isMinimalPalm ? null : (palm as Palm);
+
   return (
     <div className="max-w-2xl mx-auto p-6">
       <div className="bg-white rounded-lg shadow-lg p-6">
         <h2 className="text-2xl font-bold text-gray-800 mb-4">
           Record Activity
         </h2>
+
+        {/* Offline Warning */}
+        {offlineWarning && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-lg mb-4 text-sm">
+            <div className="flex items-start gap-2">
+              <span className="text-amber-500 mt-0.5">⚠</span>
+              <span>{offlineWarning}</span>
+            </div>
+          </div>
+        )}
 
         {/* Palm Info */}
         <div className="bg-gray-50 p-4 rounded-lg mb-6">
@@ -331,26 +380,34 @@ export default function ActivityForm({
               <span className="text-gray-600">QR Code:</span>{" "}
               <span className="font-medium">{palm.qrCode}</span>
             </div>
-            <div>
-              <span className="text-gray-600">Block:</span>{" "}
-              <span className="font-medium">{palm.blockName}</span>
-            </div>
-            {palm.rowNumber && (
-              <div>
-                <span className="text-gray-600">Row:</span>{" "}
-                <span className="font-medium">{palm.rowNumber}</span>
-              </div>
-            )}
-            {palm.columnNumber && (
-              <div>
-                <span className="text-gray-600">Column:</span>{" "}
-                <span className="font-medium">{palm.columnNumber}</span>
-              </div>
-            )}
-            {palm.variety && (
-              <div>
-                <span className="text-gray-600">Variety:</span>{" "}
-                <span className="font-medium">{palm.variety}</span>
+            {fullPalm ? (
+              <>
+                <div>
+                  <span className="text-gray-600">Block:</span>{" "}
+                  <span className="font-medium">{fullPalm.blockName}</span>
+                </div>
+                {fullPalm.rowNumber && (
+                  <div>
+                    <span className="text-gray-600">Row:</span>{" "}
+                    <span className="font-medium">{fullPalm.rowNumber}</span>
+                  </div>
+                )}
+                {fullPalm.columnNumber && (
+                  <div>
+                    <span className="text-gray-600">Column:</span>{" "}
+                    <span className="font-medium">{fullPalm.columnNumber}</span>
+                  </div>
+                )}
+                {fullPalm.variety && (
+                  <div>
+                    <span className="text-gray-600">Variety:</span>{" "}
+                    <span className="font-medium">{fullPalm.variety}</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="col-span-2 text-gray-500 italic">
+                Additional details will be available when online
               </div>
             )}
           </div>
