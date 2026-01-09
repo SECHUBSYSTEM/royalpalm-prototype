@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { saveCheckOutOffline } from "@/lib/offline/attendance";
+import { saveCheckOutHybrid } from "@/lib/offline/attendance";
 import { useSyncStore } from "@/stores/sync-store";
 
 interface AttendanceCheckOutProps {
@@ -17,35 +17,46 @@ export default function AttendanceCheckOut({
 }: AttendanceCheckOutProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [checkedOut, setCheckedOut] = useState(false);
-  const { updateStatus } = useSyncStore();
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const { updateStatus, sync } = useSyncStore();
 
   const handleCheckOut = async () => {
     setLoading(true);
     setError(null);
+    setSyncStatus(null);
 
     try {
-      await saveCheckOutOffline(employeeId, new Date());
+      // Use hybrid save - tries Supabase first, falls back to IndexedDB
+      const result = await saveCheckOutHybrid(employeeId, new Date());
+
+      console.log("[Check-Out] Result:", result);
+
+      // Update sync status display
+      if (result.synced) {
+        setSyncStatus("Saved to cloud");
+      } else {
+        setSyncStatus("Saved offline - will sync later");
+        // Try background sync if not synced
+        setTimeout(() => {
+          sync().catch(console.error);
+        }, 100);
+      }
+
+      // Update sync store status
       await updateStatus();
-      setCheckedOut(true);
+
+      // Small delay to ensure IndexedDB state is readable
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Call onSuccess to refresh the parent's state
       onSuccess?.();
     } catch (err) {
+      console.error("[Check-Out] Error:", err);
       setError(err instanceof Error ? err.message : "Failed to check out");
     } finally {
       setLoading(false);
     }
   };
-
-  if (checkedOut) {
-    return (
-      <div className="bg-blue-100 text-blue-800 p-4 rounded-lg">
-        <p className="font-semibold">✓ Checked out successfully!</p>
-        <p className="text-sm mt-1">
-          Your attendance has been recorded and will sync when online.
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
@@ -59,12 +70,29 @@ export default function AttendanceCheckOut({
         </div>
       )}
 
+      {syncStatus && (
+        <div className="bg-blue-50 text-blue-700 p-3 rounded-lg mb-4 text-sm">
+          {syncStatus}
+        </div>
+      )}
+
       <button
         onClick={handleCheckOut}
         disabled={loading}
-        className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed cursor-pointer font-medium">
-        {loading ? "Checking out..." : "Check Out"}
+        className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed cursor-pointer font-medium flex items-center justify-center gap-2">
+        {loading ? (
+          <>
+            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            Checking out...
+          </>
+        ) : (
+          "Check Out"
+        )}
       </button>
+
+      <p className="text-xs text-gray-500 mt-4 text-center">
+        Works offline - your attendance will be saved locally and synced when online
+      </p>
     </div>
   );
 }

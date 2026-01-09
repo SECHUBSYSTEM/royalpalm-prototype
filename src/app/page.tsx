@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import QRScanner from "@/components/qr/QRScanner";
-import SyncStatus from "@/components/sync/SyncStatus";
 import PalmSyncStatus from "@/components/sync/PalmSyncStatus";
 import { useAuthStore } from "@/stores/auth-store";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
@@ -142,7 +141,7 @@ function HomeContent() {
         <QRScanner onScan={handleScan} onClose={() => setShowScanner(false)} />
       )}
 
-      <SyncStatus />
+      {/* PalmSyncStatus only shows during initial cache sync, then hides */}
       <PalmSyncStatus />
     </div>
   );

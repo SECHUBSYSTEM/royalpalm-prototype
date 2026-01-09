@@ -16,26 +16,58 @@ const syncSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  console.log("[Activity Sync] Starting sync...");
+  
   try {
     const body = await request.json();
     const { activities } = syncSchema.parse(body);
+    
+    console.log(`[Activity Sync] Processing ${activities.length} activities`);
 
     // Validate and insert activities
     const results = await Promise.allSettled(
       activities.map(async (activity) => {
-        // Check if palm exists
-        const palm = await prisma.palm.findUnique({
+        // Try to find palm by ID first, then by QR code
+        let palm = await prisma.palm.findUnique({
           where: { id: activity.palm_id },
         });
 
         if (!palm) {
+          // Try by QR code
+          palm = await prisma.palm.findUnique({
+            where: { qrCode: activity.palm_id },
+          });
+        }
+
+        if (!palm) {
+          console.warn(`[Activity Sync] Palm ${activity.palm_id} not found`);
           throw new Error(`Palm ${activity.palm_id} not found`);
         }
+
+        // Parse GPS coordinates safely
+        let gpsLatitude: number | undefined;
+        let gpsLongitude: number | undefined;
+        
+        if (activity.data.gpsLatitude !== undefined && activity.data.gpsLatitude !== null) {
+          gpsLatitude = typeof activity.data.gpsLatitude === 'number' 
+            ? activity.data.gpsLatitude 
+            : parseFloat(String(activity.data.gpsLatitude));
+          if (isNaN(gpsLatitude)) gpsLatitude = undefined;
+        }
+        
+        if (activity.data.gpsLongitude !== undefined && activity.data.gpsLongitude !== null) {
+          gpsLongitude = typeof activity.data.gpsLongitude === 'number'
+            ? activity.data.gpsLongitude
+            : parseFloat(String(activity.data.gpsLongitude));
+          if (isNaN(gpsLongitude)) gpsLongitude = undefined;
+        }
+
+        console.log(`[Activity Sync] Creating ${activity.activity_type} for palm ${palm.qrCode}`);
 
         // Create activity record
         return prisma.palmActivity.create({
           data: {
-            palmId: activity.palm_id,
+            palmId: palm.id,
             workerId: activity.data.workerId as string,
             activityType: activity.activity_type as
               | "FERTILISER"
@@ -48,12 +80,8 @@ export async function POST(request: NextRequest) {
             activityDate: new Date(activity.data.activityDate as string),
             details: JSON.parse(JSON.stringify(activity.data)),
             notes: activity.data.notes as string | undefined,
-            gpsLatitude: activity.data.gpsLatitude
-              ? parseFloat(activity.data.gpsLatitude as string)
-              : undefined,
-            gpsLongitude: activity.data.gpsLongitude
-              ? parseFloat(activity.data.gpsLongitude as string)
-              : undefined,
+            gpsLatitude,
+            gpsLongitude,
             synced: true,
           },
         });
@@ -62,6 +90,8 @@ export async function POST(request: NextRequest) {
 
     const successful = results.filter((r) => r.status === "fulfilled").length;
     const failed = results.filter((r) => r.status === "rejected").length;
+
+    console.log(`[Activity Sync] Complete - ${successful} synced, ${failed} failed`);
 
     return NextResponse.json({
       success: true,
@@ -74,7 +104,7 @@ export async function POST(request: NextRequest) {
         ),
     });
   } catch (error) {
-    console.error("Sync error:", error);
+    console.error("[Activity Sync] Error:", error);
 
     if (error instanceof z.ZodError) {
       return NextResponse.json(

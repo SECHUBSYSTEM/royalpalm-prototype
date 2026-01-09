@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { ActivityType } from "@/types";
-import { saveActivityOffline } from "@/lib/offline/activities";
+import { saveActivityHybrid } from "@/lib/offline/activities";
 import { useSyncStore } from "@/stores/sync-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { getPalmFromCache, cachePalm } from "@/lib/offline/palms";
@@ -60,7 +60,7 @@ export default function ActivityForm({
     longitude?: number;
   }>({});
 
-  const { updateStatus } = useSyncStore();
+  const { updateStatus, sync } = useSyncStore();
   const { user } = useAuthStore();
 
   useEffect(() => {
@@ -140,7 +140,8 @@ export default function ActivityForm({
         return;
       }
 
-      await saveActivityOffline({
+      // Use hybrid save - tries Supabase first, falls back to IndexedDB
+      const result = await saveActivityHybrid({
         palmId,
         activityType,
         activityDate: new Date(activityDate),
@@ -151,8 +152,17 @@ export default function ActivityForm({
         workerId: user.employeeId,
       });
 
+      console.log("[Activity] Save result:", result);
+
       // Update sync status
       await updateStatus();
+
+      // Try background sync if not synced
+      if (!result.synced) {
+        setTimeout(() => {
+          sync().catch(console.error);
+        }, 100);
+      }
 
       onSuccess?.();
     } catch (err) {

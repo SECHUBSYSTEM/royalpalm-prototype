@@ -16,9 +16,13 @@ const syncSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  console.log("[Attendance Sync] Starting sync...");
+  
   try {
     const body = await request.json();
     const { attendance } = syncSchema.parse(body);
+    
+    console.log(`[Attendance Sync] Processing ${attendance.length} records`);
 
     // Validate and insert attendance records
     const results = await Promise.allSettled(
@@ -29,16 +33,51 @@ export async function POST(request: NextRequest) {
         });
 
         if (!employee) {
+          console.warn(`[Attendance Sync] Employee ${record.employee_id} not found`);
           throw new Error(`Employee ${record.employee_id} not found`);
         }
 
-        // Create attendance record
+        // Check if this attendance already exists (for same employee and check_in time)
+        const checkInDate = new Date(record.check_in);
+        const checkInStart = new Date(checkInDate);
+        checkInStart.setSeconds(checkInStart.getSeconds() - 5); // 5 second window
+        const checkInEnd = new Date(checkInDate);
+        checkInEnd.setSeconds(checkInEnd.getSeconds() + 5);
+
+        const existing = await prisma.attendance.findFirst({
+          where: {
+            employeeId: record.employee_id,
+            checkIn: {
+              gte: checkInStart,
+              lte: checkInEnd,
+            },
+          },
+        });
+
+        if (existing) {
+          // Update existing record with check_out if needed
+          if (record.check_out && !existing.checkOut) {
+            console.log(`[Attendance Sync] Updating check-out for employee ${record.employee_id}`);
+            return prisma.attendance.update({
+              where: { id: existing.id },
+              data: {
+                checkOut: new Date(record.check_out),
+                synced: true,
+              },
+            });
+          }
+          console.log(`[Attendance Sync] Record already exists for employee ${record.employee_id}`);
+          return existing;
+        }
+
+        // Create new attendance record
+        console.log(`[Attendance Sync] Creating record for employee ${record.employee_id}`);
         return prisma.attendance.create({
           data: {
             employeeId: record.employee_id,
             checkIn: new Date(record.check_in),
             checkOut: record.check_out ? new Date(record.check_out) : null,
-            verifiedBy: "FINGERPRINT", // Default, can be enhanced
+            verifiedBy: "FINGERPRINT",
             synced: true,
           },
         });
@@ -47,6 +86,8 @@ export async function POST(request: NextRequest) {
 
     const successful = results.filter((r) => r.status === "fulfilled").length;
     const failed = results.filter((r) => r.status === "rejected").length;
+
+    console.log(`[Attendance Sync] Complete - ${successful} synced, ${failed} failed`);
 
     return NextResponse.json({
       success: true,
@@ -59,7 +100,7 @@ export async function POST(request: NextRequest) {
         ),
     });
   } catch (error) {
-    console.error("Sync error:", error);
+    console.error("[Attendance Sync] Error:", error);
 
     if (error instanceof z.ZodError) {
       return NextResponse.json(

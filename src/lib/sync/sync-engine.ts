@@ -19,13 +19,12 @@ export interface SyncResult {
  */
 export const syncActivities = async (): Promise<SyncResult> => {
   const db = await getDB();
-  const tx = db.transaction("activities_queue", "readwrite");
-  const store = tx.store;
-  const index = store.index("by-synced");
 
-  // Get all unsynced activities
-  // Note: IDBKeyRange.only() doesn't work with boolean values
-  // So we iterate through all records and filter
+  // Get all unsynced activities (read-only transaction)
+  const readTx = db.transaction("activities_queue", "readonly");
+  const readStore = readTx.store;
+  const index = readStore.index("by-synced");
+
   const unsynced: ActivityQueueItem[] = [];
   let cursor = await index.openCursor();
   while (cursor) {
@@ -34,10 +33,13 @@ export const syncActivities = async (): Promise<SyncResult> => {
     }
     cursor = await cursor.continue();
   }
+  await readTx.done;
 
   if (unsynced.length === 0) {
     return { success: true, synced: 0, failed: 0 };
   }
+
+  console.log(`[Sync] Found ${unsynced.length} unsynced activities`);
 
   const results: SyncResult = {
     success: true,
@@ -57,21 +59,27 @@ export const syncActivities = async (): Promise<SyncResult> => {
         1000
       );
 
-      // Mark as synced
+      // Mark as synced - create new transaction for each batch
+      const writeTx = db.transaction("activities_queue", "readwrite");
+      const writeStore = writeTx.store;
+
       for (const activity of batch) {
-        await store.put({ ...activity, synced: true });
+        await writeStore.put({ ...activity, synced: true });
         results.synced++;
       }
+
+      await writeTx.done;
+      console.log(`[Sync] Synced ${batch.length} activities to server`);
     } catch (error) {
       results.success = false;
       results.failed += batch.length;
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       results.errors?.push(`Batch ${i / BATCH_SIZE + 1}: ${errorMessage}`);
+      console.error(`[Sync] Activity batch failed:`, errorMessage);
     }
   }
 
-  await tx.done;
   return results;
 };
 
@@ -80,13 +88,12 @@ export const syncActivities = async (): Promise<SyncResult> => {
  */
 export const syncAttendance = async (): Promise<SyncResult> => {
   const db = await getDB();
-  const tx = db.transaction("attendance_queue", "readwrite");
-  const store = tx.store;
-  const index = store.index("by-synced");
 
-  // Get all unsynced attendance records
-  // Note: IDBKeyRange.only() doesn't work with boolean values
-  // So we iterate through all records and filter
+  // Get all unsynced attendance records (read-only transaction)
+  const readTx = db.transaction("attendance_queue", "readonly");
+  const readStore = readTx.store;
+  const index = readStore.index("by-synced");
+
   const unsynced: AttendanceQueueItem[] = [];
   let cursor = await index.openCursor();
   while (cursor) {
@@ -95,10 +102,13 @@ export const syncAttendance = async (): Promise<SyncResult> => {
     }
     cursor = await cursor.continue();
   }
+  await readTx.done;
 
   if (unsynced.length === 0) {
     return { success: true, synced: 0, failed: 0 };
   }
+
+  console.log(`[Sync] Found ${unsynced.length} unsynced attendance records`);
 
   const results: SyncResult = {
     success: true,
@@ -118,21 +128,27 @@ export const syncAttendance = async (): Promise<SyncResult> => {
         1000
       );
 
-      // Mark as synced
+      // Mark as synced - create new transaction for each batch
+      const writeTx = db.transaction("attendance_queue", "readwrite");
+      const writeStore = writeTx.store;
+
       for (const record of batch) {
-        await store.put({ ...record, synced: true });
+        await writeStore.put({ ...record, synced: true });
         results.synced++;
       }
+
+      await writeTx.done;
+      console.log(`[Sync] Synced ${batch.length} attendance records to server`);
     } catch (error) {
       results.success = false;
       results.failed += batch.length;
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       results.errors?.push(`Batch ${i / BATCH_SIZE + 1}: ${errorMessage}`);
+      console.error(`[Sync] Attendance batch failed:`, errorMessage);
     }
   }
 
-  await tx.done;
   return results;
 };
 
@@ -143,6 +159,8 @@ export const syncAll = async (): Promise<{
   activities: SyncResult;
   attendance: SyncResult;
 }> => {
+  console.log("[Sync] Starting sync all...");
+  
   const [activities, attendance] = await Promise.all([
     syncActivities(),
     syncAttendance(),
@@ -159,13 +177,17 @@ export const syncAll = async (): Promise<{
     failed_count: activities.failed + attendance.failed,
   });
 
+  console.log(`[Sync] Complete - Activities: ${activities.synced}/${activities.synced + activities.failed}, Attendance: ${attendance.synced}/${attendance.synced + attendance.failed}`);
+
   return { activities, attendance };
 };
 
 /**
  * Check actual internet connectivity (not just navigator.onLine)
  */
-const checkConnectivity = async (): Promise<boolean> => {
+export const checkConnectivity = async (): Promise<boolean> => {
+  if (typeof navigator === "undefined") return false;
+  
   // First check navigator.onLine (fast check)
   if (!navigator.onLine) {
     return false;
@@ -173,12 +195,10 @@ const checkConnectivity = async (): Promise<boolean> => {
 
   // Then verify actual connectivity with a lightweight request
   try {
-    // Use a small fetch with short timeout to verify connectivity
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
 
-    // Try to fetch a lightweight resource (favicon or root)
-    // This doesn't require authentication and is very small
+    // Try to fetch a lightweight resource
     const response = await fetch("/favicon.ico", {
       method: "HEAD",
       signal: controller.signal,
@@ -186,11 +206,8 @@ const checkConnectivity = async (): Promise<boolean> => {
     });
 
     clearTimeout(timeoutId);
-    // If we get any response (even 404), we're online
-    // Status 0 means network error (offline)
     return response.status !== 0;
   } catch {
-    // Network error or timeout - we're offline
     return false;
   }
 };
@@ -226,7 +243,7 @@ export const getSyncStatus = async () => {
   const metadataStore = db.transaction("sync_metadata", "readonly").store;
   const metadata = await metadataStore.get("last_sync");
 
-  // Check actual connectivity, not just navigator.onLine
+  // Check actual connectivity
   const isOnline = await checkConnectivity();
 
   return {
